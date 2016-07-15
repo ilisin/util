@@ -1,37 +1,37 @@
-package postgres
+package oracle
 
 import (
 	"fmt"
-	"reflect"
+
+	"gogs.xlh/tools/configuration"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/go-xorm/core"
 	"github.com/go-xorm/xorm"
-	_ "github.com/lib/pq"
-	"gogs.xlh/tools/configuration"
+	_ "github.com/mattn/go-oci8"
+	//	_ "github.com/tgulacsi/goracle/godrv"
+	"os"
+	"reflect"
 )
 
-type ShowLevel int
-
-type PostgresConfig struct {
+type OracleConfig struct {
 	Host        string `conf:"host"`
 	Port        string `conf:"port"`
-	Database    string `conf:"database"`
+	Sid         string `conf:"sid"`
 	User        string `conf:"user"`
 	Password    string `conf:"password"`
-	SslMode     string `conf:"sslmode"`
 	Mapper      core.IMapper
 	ShowSQL     bool `conf:"showsql"`
 	LogLevel    core.LogLevel
 	LogLevelStr string `conf:"loglevel"`
 }
 
-var configs map[string]PostgresConfig
+var configs map[string]OracleConfig
 
 func init() {
-	configs = make(map[string]PostgresConfig)
+	configs = make(map[string]OracleConfig)
 	var preConfig = struct {
-		Configs map[string]PostgresConfig `conf:"util.postgres,omit"`
+		Configs map[string]OracleConfig `conf:"util.oracle,omit"`
 	}{}
 	err := configuration.Var(&preConfig)
 	if err != nil {
@@ -64,51 +64,48 @@ func strToLogLevel(str string) core.LogLevel {
 	}
 }
 
-//shows 没有传值则，debug和info都不打印
-//shows1 控制debug , shows2控制info
-func RegisterPostgres(pname string, host, port, db, user, pwd, mode string, showsql bool, level ...core.LogLevel) {
-	if _, ok := configs[pname]; ok {
-		panic(fmt.Sprintf("Postgres注册重复 [%v]", pname))
+func RegisterOracle(oname string, host, port, sid, user, pwd string, showSQL bool, level ...core.LogLevel) {
+	if _, ok := configs[oname]; ok {
+		panic(fmt.Sprintf("Oracle注册重复 [%v]", oname))
 	}
-	config := PostgresConfig{
+	config := OracleConfig{
 		Host:     host,
 		Port:     port,
-		Database: db,
+		Sid:      sid,
 		User:     user,
 		Password: pwd,
-		SslMode:  mode,
 		//Mapper:   new(UpperMapper),
-		ShowSQL:  showsql,
+		ShowSQL:  showSQL,
 	}
 	if len(level) > 0 {
 		config.LogLevel = level[0]
 	} else {
 		config.LogLevel = core.LOG_INFO
 	}
-	configs[pname] = config
+	configs[oname] = config
 }
 
-func NewPostgresXormInit(pname string) (*xorm.Engine, error) {
+func NewOracleXormInit(oname string) (*xorm.Engine, error) {
 	var (
-		err            error
-		postgresEngine *xorm.Engine
+		err          error
+		oracleEngine *xorm.Engine
 	)
+	os.Setenv("NLS_LANG", "AMERICAN_AMERICA.AL32UTF8")
 
-	c, ok := configs[pname]
+	c, ok := configs[oname]
 	if !ok {
-		panic(fmt.Sprintf("postgres数据库未注册 [%v]", pname))
+		panic(fmt.Sprintf("Oracle not regist [%v]", oname))
 	}
 
-	postgresEngine, err = xorm.NewEngine("postgres", fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", c.User, c.Password,
-		c.Host, c.Port, c.Database, c.SslMode))
+	//oci8
+	oracleEngine, err = xorm.NewEngine("oci8", fmt.Sprintf(`%s/%s@%s:%s/%s`, c.User, c.Password, c.Host, c.Port, c.Sid))
 	if err != nil {
-		//panic(err)
 		return nil, err
 	}
 	//默认Mapper采用SnakMapper列名为 _ 链接组合
-	//postgresEngine.SetMapper(core.NewCacheMapper(c.Mapper))
-	postgresEngine.ShowSQL(c.ShowSQL)
-	postgresEngine.Logger().SetLevel(c.LogLevel)
+	//oracleEngine.SetMapper(core.NewCacheMapper(c.Mapper))
+	oracleEngine.ShowSQL(c.ShowSQL)
+	oracleEngine.Logger().SetLevel(c.LogLevel)
 
 	//	f, err := os.Create("d:\\sql.log")
 	//	if err != nil {
@@ -117,7 +114,7 @@ func NewPostgresXormInit(pname string) (*xorm.Engine, error) {
 	//		engine.Logger = xorm.NewSimpleLogger(f)
 	//	}
 
-	return postgresEngine, nil
+	return oracleEngine, nil
 }
 
 func And(oldCondition, condition string, args ...interface{}) string {
@@ -133,6 +130,10 @@ func And(oldCondition, condition string, args ...interface{}) string {
 				}
 			case reflect.Int32, reflect.Int, reflect.Int64:
 				if val.Int() == 0 {
+					return oldCondition
+				}
+			case reflect.Bool:
+				if val.Bool() {
 					return oldCondition
 				}
 			default:
